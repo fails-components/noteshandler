@@ -1,10 +1,13 @@
 {
-  "name": "fails-components-noteshandler",
+  "name": "@martenrichter/fails-components-noteshandler",
   "version": "0.0.1",
   "description": "Supplies server side notes handling",
   "author": "Marten Richter",
   "license": "AGPL-3.0-or-later",
-  "repository": "martenrichter/fails-components-noteshandler",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/martenrichter/fails-components-noteshandler.git"
+  },
   "main": "src/server.js",
   "source": "src/server.js",
   "type": "module",
@@ -14,7 +17,7 @@
   "scripts": {
     "start": "node dist/server.js",
     "dev": "nodemon -r dotenv/config src/server.js",
-    "test": "run-s test:unit test:lint",
+    "test": "run-s test:lint",
     "test:lint": "eslint ."
   },
   "devDependencies": {
@@ -23,9 +26,8 @@
     "cross-env": "^7.0.3",
     "dotenv": "^10.0.0",
     "eslint": "^7.20.0",
-    "eslint-config-prettier": "^8.0.0",
+    "eslint-config-prettier": "^7.2.0",
     "eslint-config-standard": "^16.0.2",
-    "eslint-config-standard-react": "^11.0.1",
     "eslint-plugin-import": "^2.22.1",
     "eslint-plugin-node": "^11.1.0",
     "eslint-plugin-prettier": "^3.3.1",
@@ -42,12 +44,12 @@
     "dist"
   ],
   "dependencies": {
-    "fails-components-data": "file:../fails-components-data",
+    "@martenrichter/fails-components-data": "^0.0.1",
     "uuid": "^8.3.2",
     "@socket.io/redis-adapter": "^7.0.0",
     "cron": "^1.8.2",
-    "fails-components-security": "file:../fails-components-security",
-    "fails-components-config": "file:../fails-components-config",
+    "@martenrichter/fails-components-security": "^0.0.0",
+    "@martenrichter/fails-components-config": "^0.0.0",
     "mongodb": "^3.6.9",
     "redis": "^3.1.2",
     "socket.io": "^4.1.2"
@@ -57,5 +59,8 @@
       "files/*"
     ],
     "delay": 2500
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   }
 }
