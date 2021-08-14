@@ -1,7 +1,6 @@
 FROM node:14
 
 ARG ENV
-ARG GH_TOKEN
 
 WORKDIR /usr/src/noteshandler
 
@@ -9,7 +8,7 @@ COPY package*.json ./
 COPY .npmrc ./
 
 #debug
-RUN if [ "$ENV" = "debug" ] ; then npm install ; else  npm ci --only=production; fi
+RUN --mount=type=secret,id=GH_TOKEN export GH_TOKEN=`cat /run/secrets/GH_TOKEN`; if [ "$ENV" = "debug" ] ; then npm install ; else  npm ci --only=production; fi
 
 COPY . .
 
