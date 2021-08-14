@@ -34,7 +34,7 @@ const initServer = async () => {
   const cfg = new FailsConfig()
 
   // this should be read only replica
-  const redisclient = redis.createClient({
+  const redisclient = redis.createClient(cfg.redisPort(), cfg.redisHost(), {
     detect_buffers: true /* required by notes connection */
   })
 
@@ -80,7 +80,11 @@ const initServer = async () => {
     }
   }
 
-  const ioIns = new Server(server, { cors: cors })
+  const ioIns = new Server(server, {
+    cors: cors,
+    path: '/notes.io',
+    serveClient: false
+  })
   const notepadio = ioIns.of('/notepads')
   const screenio = ioIns.of('/screens')
   const notesio = ioIns.of('/notes')
@@ -113,7 +117,10 @@ const initServer = async () => {
     return next(new Error('no Connection possible'))
   }) // this should not connect to screen
 
-  server.listen(cfg.getPort('notes'), cfg.getHost(), function () {
+  let port = cfg.getPort('notes')
+  if (port === 443) port = 8080 // we are in production mode inside a container
+
+  server.listen(port, cfg.getHost(), function () {
     console.log(
       'Failsserver listening at http://%s:%s',
       server.address().address,
