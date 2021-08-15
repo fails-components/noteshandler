@@ -15,7 +15,7 @@
     "node": ">=14"
   },
   "scripts": {
-    "start": "node dist/server.js",
+    "start": "node src/server.js",
     "dev": "nodemon -r dotenv/config src/server.js",
     "test": "run-s test:lint",
     "test:lint": "eslint ."
