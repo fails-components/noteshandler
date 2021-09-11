@@ -66,6 +66,12 @@ export class NotesConnection {
       socket.emit('authtoken', { token: token.token })
     }
 
+    {
+      const presinfo = this.getPresentationinfo(purenotes)
+      const readypresinfo = await presinfo
+      socket.emit('presinfo', readypresinfo)
+    }
+
     socket.on(
       'reauthor',
       async function () {
@@ -310,6 +316,29 @@ export class NotesConnection {
         }
       }.bind(this)
     )
+  }
+
+  async getPresentationinfo(args) {
+    const client = this.redis
+    const hmget = promisify(this.redis.hmget).bind(client)
+
+    try {
+      let lectprop = hmget(
+        'lecture:' + args.lectureuuid,
+        'casttoscreens',
+        'backgroundbw',
+        'showscreennumber'
+      )
+      lectprop = await lectprop
+      return {
+        casttoscreens: lectprop[0],
+        backgroundbw: lectprop[1],
+        showscreennumber: lectprop[2]
+      }
+    } catch (error) {
+      console.log('getPresentationinfo', error)
+      return null
+    }
   }
 
   getRoomName(uuid) {
