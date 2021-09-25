@@ -50,14 +50,14 @@ export class NotesConnection {
 
     let curtoken = socket.decoded_token
 
-    console.log('notes connected')
+    // console.log('notes connected')
 
     this.getLectDetail(purenotes, socket)
 
-    console.log('notes send board data')
+    // console.log('notes send board data')
     this.sendBoardsToSocket(purenotes.lectureuuid, socket)
     purenotes.roomname = this.getRoomName(purenotes.lectureuuid)
-    console.log('notes is connected to notepad, join room', purenotes.roomname)
+    // console.log('notes is connected to notepad, join room', purenotes.roomname)
     socket.join(purenotes.roomname)
 
     {
@@ -109,8 +109,8 @@ export class NotesConnection {
     socket.on(
       'castvote',
       async function (data, callback) {
-        console.log('db cv data', data)
-        console.log('db cv callback', callback)
+        // console.log('db cv data', data)
+        // console.log('db cv callback', callback)
         /* console.log("db cv1", data.pollid && data.pollid.match(/^[0-9a-zA-Z]{9}$/.test));
       console.log("db cv2",data.selection && ((data.selection && typeof data.selection=="string" && data.selection.match(/^[0-9a-zA-Z]{9}$/))));
       console.log("db cv3",(( typeof data.selection=="string" && data.selection.match(/^[0-9a-zA-Z]{9}$/))));
@@ -163,7 +163,7 @@ export class NotesConnection {
       if (purenotes) {
         if (purenotes.roomname) {
           socket.leave(purenotes.roomname)
-          console.log('notes disconnected leave room', purenotes.roomname)
+          // console.log('notes disconnected leave room', purenotes.roomname)
           purenotes.roomname = null
         }
       }
@@ -291,12 +291,12 @@ export class NotesConnection {
         // TODO sync to mongodb
         if (err) console.log('boards in sendBoardsToSocket picture', err)
         else {
-          console.log('boards', res, 'lecture:' + lectureuuid + ':boards')
+          // console.log('boards', res, 'lecture:' + lectureuuid + ':boards')
           const length = res.length
           let countdown = length
           for (const index in res) {
             const boardnum = res[index]
-            console.log('sendBoardsToSocket', boardnum, lectureuuid)
+            // console.log('sendBoardsToSocket', boardnum, lectureuuid)
             this.redis.get(
               Buffer.from('lecture:' + lectureuuid + ':board' + boardnum),
               function (err2, res2) {
