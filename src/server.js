@@ -35,7 +35,8 @@ const initServer = async () => {
 
   // this should be read only replica
   const redisclient = redis.createClient(cfg.redisPort(), cfg.redisHost(), {
-    detect_buffers: true /* required by notes connection */
+    detect_buffers: true /* required by notescreen connection */,
+    password: cfg.redisPass()
   })
 
   // and yes pub sub is also read only so we need a mechanism for chat....

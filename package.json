@@ -1,6 +1,6 @@
 {
   "name": "@fails-components/noteshandler",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Supplies server side notes handling",
   "author": "Marten Richter",
   "license": "AGPL-3.0-or-later",
@@ -44,7 +44,7 @@
     "dist"
   ],
   "dependencies": {
-    "@fails-components/config": "0.0.3",
+    "@fails-components/config": ">=0.0.5",
     "@fails-components/data": ">=0.0.2",
     "@fails-components/security": "0.0.2",
     "@socket.io/redis-adapter": "^7.0.0",
