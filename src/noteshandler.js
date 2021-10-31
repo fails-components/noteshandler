@@ -332,9 +332,9 @@ export class NotesConnection {
       )
       lectprop = await lectprop
       return {
-        casttoscreens: lectprop[0],
-        backgroundbw: lectprop[1],
-        showscreennumber: lectprop[2]
+        casttoscreens: lectprop[0] !== null ? lectprop[0] : 'false',
+        backgroundbw: lectprop[1] !== null ? lectprop[1] : 'true',
+        showscreennumber: lectprop[2] !== null ? lectprop[2] : 'false'
       }
     } catch (error) {
       console.log('getPresentationinfo', error)
