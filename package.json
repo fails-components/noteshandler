@@ -43,9 +43,9 @@
     "dist"
   ],
   "dependencies": {
-    "@fails-components/config": ">=0.0.5",
-    "@fails-components/data": ">=0.0.12",
-    "@fails-components/security": "0.0.3",
+    "@fails-components/config": "^1.0.0-rc.1",
+    "@fails-components/data": "^1.0.0-rc.0",
+    "@fails-components/security": "^1.0.0-rc.4",
     "@socket.io/redis-adapter": "^7.0.0",
     "cron": "^1.8.2",
     "mongodb": "^3.7.3",
