@@ -12,7 +12,7 @@
   "source": "src/server.js",
   "type": "module",
   "engines": {
-    "node": ">=14"
+    "node": ">=16"
   },
   "scripts": {
     "start": "node src/server.js",
@@ -43,9 +43,9 @@
     "dist"
   ],
   "dependencies": {
-    "@fails-components/config": "^1.0.0-rc.1",
-    "@fails-components/data": "^1.0.0-rc.0",
-    "@fails-components/security": "^1.0.0-rc.4",
+    "@fails-components/config": "^1.0.0-rc.3",
+    "@fails-components/data": "^1.0.0-rc.2",
+    "@fails-components/security": "^1.0.0-rc.6",
     "@socket.io/redis-adapter": "^7.0.0",
     "cron": "^1.8.2",
     "mongodb": "^3.7.3",
