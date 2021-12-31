@@ -18,7 +18,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 import { createHash } from 'crypto'
-import { promisify } from 'util'
+import { commandOptions } from 'redis'
 
 export class NotesConnection {
   constructor(args) {
@@ -129,10 +129,8 @@ export class NotesConnection {
           try {
             const ballothash = createHash('sha256')
             ballothash.update(useruuid + data.pollid)
-            const client = this.redis
-            const get = promisify(this.redis.get).bind(client)
 
-            const salt = await get(
+            const salt = await this.redis.get(
               'pollsalt:lecture:' +
                 purenotes.lectureuuid +
                 ':poll:' +
@@ -285,51 +283,56 @@ export class NotesConnection {
       socket.emit('bgpdfinfo', { none: true })
     }
 
-    this.redis.smembers(
-      'lecture:' + lectureuuid + ':boards',
-      function (err, res) {
-        // TODO sync to mongodb
-        if (err) console.log('boards in sendBoardsToSocket picture', err)
-        else {
-          // console.log('boards', res, 'lecture:' + lectureuuid + ':boards')
-          const length = res.length
-          let countdown = length
-          if (length === 0) socket.emit('reloadBoard', { last: true })
-          for (const index in res) {
-            const boardnum = res[index]
-            // console.log('sendBoardsToSocket', boardnum, lectureuuid)
-            this.redis.get(
-              Buffer.from('lecture:' + lectureuuid + ':board' + boardnum),
-              function (err2, res2) {
-                if (err2)
-                  console.log('get board in sendBoardsToSocket picture', err2)
-                countdown--
-                // console.log("send reloadboard",boardnum,res2,length);
-                const send = {
-                  number: boardnum,
-                  data: res2,
-                  last: countdown === 0
-                }
-                socket.emit('reloadBoard', send)
-              }
+    try {
+      const res = await this.redis.sMembers(
+        'lecture:' + lectureuuid + ':boards'
+      )
+
+      // console.log('boards', res, 'lecture:' + lectureuuid + ':boards')
+      const length = res.length
+      let countdown = length
+      if (length === 0) socket.emit('reloadBoard', { last: true })
+      for (const index in res) {
+        const boardnum = res[index]
+        // console.log('sendBoardsToSocket', boardnum, lectureuuid)
+        try {
+          let res2
+          if (this.redis.getBuffer)
+            // required for v 4.0.0, remove later
+            res2 = await this.redis.getBuffer(
+              'lecture:' + lectureuuid + ':board' + boardnum
             )
+          // future api
+          else
+            res2 = await this.redis.getBuffer(
+              commandOptions({ returnBuffers: true }),
+              'lecture:' + lectureuuid + ':board' + boardnum
+            )
+
+          countdown--
+          // console.log('send reloadboard', boardnum, res2, length)
+          const send = {
+            number: boardnum,
+            data: res2,
+            last: countdown === 0
           }
+          socket.emit('reloadBoard', send)
+        } catch (error) {
+          console.log('error in sendboard to sockets loop', error)
         }
-      }.bind(this)
-    )
+      }
+    } catch (error) {
+      console.log('error in sendboard to sockets', error)
+    }
   }
 
   async getPresentationinfo(args) {
-    const client = this.redis
-    const hmget = promisify(this.redis.hmget).bind(client)
-
     try {
-      let lectprop = hmget(
-        'lecture:' + args.lectureuuid,
+      let lectprop = this.redis.hmGet('lecture:' + args.lectureuuid, [
         'casttoscreens',
         'backgroundbw',
         'showscreennumber'
-      )
+      ])
       lectprop = await lectprop
       return {
         casttoscreens: lectprop[0] !== null ? lectprop[0] : 'false',
