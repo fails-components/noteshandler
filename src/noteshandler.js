@@ -45,6 +45,7 @@ export class NotesConnection {
       socketid: socket.id,
       lectureuuid: socket.decoded_token.lectureuuid,
       name: socket.decoded_token.name,
+      displayname: socket.decoded_token.user.displayname,
       purpose: 'notes'
     }
 
@@ -76,6 +77,7 @@ export class NotesConnection {
       'reauthor',
       async function () {
         // we use the information from the already present authtoken
+        this.addUpdateCryptoIdent(purenotes)
         const token = await this.getNotesToken(curtoken)
         curtoken = token.decoded
         socket.emit('authtoken', { token: token.token })
@@ -152,7 +154,19 @@ export class NotesConnection {
       }.bind(this)
     )
 
-    socket.on('disconnect', function () {
+    socket.on('keyInfo', (cmd) => {
+      if (cmd.cryptKey && cmd.signKey) {
+        purenotes.cryptKey = cmd.cryptKey
+        purenotes.signKey = cmd.signKey
+        this.addUpdateCryptoIdent(purenotes)
+      }
+    })
+
+    socket.on('keymasterQuery', () => {
+      this.handleKeymasterQuery(purenotes)
+    })
+
+    socket.on('disconnect', () => {
       console.log(
         'Notes Client %s with ip %s  disconnected',
         socket.id,
@@ -161,6 +175,13 @@ export class NotesConnection {
       if (purenotes) {
         if (purenotes.roomname) {
           socket.leave(purenotes.roomname)
+          this.redis.hDel(
+            'lecture:' + purenotes.lectureuuid + ':idents',
+            purenotes.socketid
+          )
+          this.notepadio
+            .to(purenotes.roomname)
+            .emit('identDelete', { id: purenotes.socketid })
           // console.log('notes disconnected leave room', purenotes.roomname)
           purenotes.roomname = null
         }
@@ -323,6 +344,92 @@ export class NotesConnection {
       }
     } catch (error) {
       console.log('error in sendboard to sockets', error)
+    }
+  }
+
+  async addUpdateCryptoIdent(args) {
+    const identity = {
+      signKey: args.signKey,
+      cryptKey: args.cryptKey,
+      displayname: args.displayname,
+      /* id: args.socketid, */
+      purpose: args.purpose,
+      lastaccess: Date.now().toString()
+    }
+    // Two things store it in redis until disconnect
+    const oldident = this.redis.hGet(
+      'lecture:' + args.lectureuuid + ':idents',
+      args.socketid.toString()
+    )
+    this.redis.hSet('lecture:' + args.lectureuuid + ':idents', [
+      args.socketid.toString(),
+      JSON.stringify(identity)
+    ])
+    let oldid = await oldident
+    if (oldid) oldid = JSON.parse(oldid)
+
+    // and inform about new/updated identity
+    const roomname = this.getRoomName(args.lectureuuid)
+
+    if (
+      oldid &&
+      identity.signKey === oldid.signKey &&
+      identity.cryptKey === oldid.cryptKey
+    ) {
+      this.notepadio.to(roomname).emit('identValidity', {
+        lastaccess: identity.lastaccess,
+        id: args.socketid
+      })
+    } else {
+      this.notepadio
+        .to(roomname)
+        .emit('identUpdate', { identity: identity, id: args.socketid })
+    }
+  }
+
+  async handleKeymasterQuery(args) {
+    const now = Date.now() / 1000
+    // ok, first we have to figure out if a query is already running
+    try {
+      await this.redis.executeIsolated(async (isoredis) => {
+        await isoredis.watch('lecture:' + args.lectureuuid + ':keymaster')
+        const queryInfo = await isoredis.hGet(
+          'lecture:' + args.lectureuuid + ':keymaster',
+          'queryTime'
+        )
+        /* console.log(
+          'query Info',
+          queryInfo,
+          now - Number(queryInfo),
+          now,
+          Number(queryInfo)
+        ) */
+
+        if (queryInfo && now - Number(queryInfo) < 15) {
+          // we have no key, so may be the kaymaster does not know that we exist
+          await this.addUpdateCryptoIdent(args)
+          return // do not spam the system with these queries 20 +10
+        }
+
+        const res = await isoredis
+          .multi()
+          .hSet('lecture:' + args.lectureuuid + ':keymaster', [
+            'queryTime',
+            now.toString(),
+            'bidding',
+            '0',
+            'master',
+            'none'
+          ])
+          .exec()
+        if (res !== null) {
+          const roomname = this.getRoomName(args.lectureuuid)
+          // start the bidding
+          this.notepadio.to(roomname).emit('keymasterQuery')
+        }
+      })
+    } catch (error) {
+      console.log('handleKeymasterQuery problem or multple attempts', error)
     }
   }
 
