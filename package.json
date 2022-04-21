@@ -43,13 +43,13 @@
     "dist"
   ],
   "dependencies": {
-    "@fails-components/config": "^1.0.0",
-    "@fails-components/data": "^1.0.0",
-    "@fails-components/security": "^1.0.0",
+    "@fails-components/config": "^1.0.1",
+    "@fails-components/data": "^1.0.1",
+    "@fails-components/security": "^1.0.1",
     "@socket.io/redis-adapter": "^7.1.0",
     "cron": "^1.8.2",
     "mongodb": "^3.7.3",
-    "redis": "^4.0.1",
+    "redis": "^4.0.6",
     "socket.io": "^4.3.1",
     "uuid": "^8.3.2"
   },

@@ -317,18 +317,10 @@ export class NotesConnection {
         const boardnum = res[index]
         // console.log('sendBoardsToSocket', boardnum, lectureuuid)
         try {
-          let res2
-          if (this.redis.getBuffer)
-            // required for v 4.0.0, remove later
-            res2 = await this.redis.getBuffer(
-              'lecture:' + lectureuuid + ':board' + boardnum
-            )
-          // future api
-          else
-            res2 = await this.redis.getBuffer(
-              commandOptions({ returnBuffers: true }),
-              'lecture:' + lectureuuid + ':board' + boardnum
-            )
+          const res2 = await this.redis.getBuffer(
+            commandOptions({ returnBuffers: true }),
+            'lecture:' + lectureuuid + ':board' + boardnum
+          )
 
           countdown--
           // console.log('send reloadboard', boardnum, res2, length)
