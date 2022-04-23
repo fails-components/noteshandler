@@ -187,6 +187,11 @@ export class NotesConnection {
         }
       }
     })
+
+    {
+      const pollstate = await this.getPollinfo(purenotes)
+      if (pollstate) socket.emit(pollstate.command, pollstate.data)
+    }
   }
 
   async getNotesToken(oldtoken) {
@@ -317,7 +322,7 @@ export class NotesConnection {
         const boardnum = res[index]
         // console.log('sendBoardsToSocket', boardnum, lectureuuid)
         try {
-          const res2 = await this.redis.getBuffer(
+          const res2 = await this.redis.get(
             commandOptions({ returnBuffers: true }),
             'lecture:' + lectureuuid + ':board' + boardnum
           )
@@ -440,6 +445,20 @@ export class NotesConnection {
       }
     } catch (error) {
       console.log('getPresentationinfo', error)
+      return null
+    }
+  }
+
+  async getPollinfo(args) {
+    try {
+      const pollinfo = await this.redis.hGetAll(
+        'lecture:' + args.lectureuuid + ':pollstate'
+      )
+      if (pollinfo.command && pollinfo.data)
+        return { command: pollinfo.command, data: JSON.parse(pollinfo.data) }
+      else return null
+    } catch (error) {
+      console.log('getPollInfo failed', error)
       return null
     }
   }
