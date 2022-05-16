@@ -73,6 +73,8 @@ export class NotesConnection {
       socket.emit('presinfo', readypresinfo)
     }
 
+    this.emitAVOffers(socket, purenotes)
+
     socket.on(
       'reauthor',
       async function () {
@@ -428,6 +430,23 @@ export class NotesConnection {
     } catch (error) {
       console.log('handleKeymasterQuery problem or multple attempts', error)
     }
+  }
+
+  // sync with notepadhandler
+  async emitAVOffers(socket, args) {
+    const alloffers = await this.redis.hGetAll(
+      'lecture:' + args.lectureuuid + ':avoffers'
+    )
+    const offers = []
+    for (const label in alloffers) {
+      const labels = label.split(':')
+      offers.push({
+        type: labels[0],
+        id: labels[1],
+        time: alloffers[label]
+      })
+    }
+    socket.emit('avofferList', { offers })
   }
 
   async getPresentationinfo(args) {
