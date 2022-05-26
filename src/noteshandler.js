@@ -58,6 +58,14 @@ export class NotesConnection {
     // console.log('notes send board data')
     this.sendBoardsToSocket(purenotes.lectureuuid, socket)
     purenotes.roomname = this.getRoomName(purenotes.lectureuuid)
+    {
+      const messagehash = createHash('sha256')
+      const useruuid = socket.decoded_token.user.useruuid
+      // now we create a hash that can be used to identify a user, if and only if,
+      // access to this database is available and not between lectures!
+      messagehash.update(useruuid + purenotes.lectureuuid)
+      purenotes.userhash = messagehash.digest('hex')
+    }
     // console.log('notes is connected to notepad, join room', purenotes.roomname)
     socket.join(purenotes.roomname)
 
@@ -86,29 +94,21 @@ export class NotesConnection {
       }.bind(this)
     )
 
-    socket.on(
-      'chatquestion',
-      function (cmd) {
-        if (cmd.text) {
-          const messagehash = createHash('sha256')
-          const useruuid = socket.decoded_token.user.useruuid
-          const displayname = socket.decoded_token.user.displayname
-          // now we create a hash that can be used to identify a user, if and only if,
-          // access to this database is available and not between lectures!
-          messagehash.update(useruuid + purenotes.lectureuuid)
-          const userhash = messagehash.digest('hex')
+    socket.on('chatquestion', (cmd) => {
+      if (cmd.text) {
+        const displayname = socket.decoded_token.user.displayname
+        const userhash = purenotes.userhash
 
-          this.notepadio.to(purenotes.roomname).emit('chatquestion', {
-            displayname: displayname,
-            text: cmd.text,
-            userhash: userhash
-          })
+        this.notepadio.to(purenotes.roomname).emit('chatquestion', {
+          displayname: displayname,
+          text: cmd.text,
+          userhash: userhash
+        })
 
-          // console.log("chat send", cmd.text,socket.decoded_token);
-        }
-        // console.log("chatquestion",cmd);
-      }.bind(this)
-    )
+        // console.log("chat send", cmd.text,socket.decoded_token);
+      }
+      // console.log("chatquestion",cmd);
+    })
 
     socket.on(
       'castvote',
@@ -346,11 +346,13 @@ export class NotesConnection {
     }
   }
 
+  // synced changes from notepad
   async addUpdateCryptoIdent(args) {
     const identity = {
       signKey: args.signKey,
       cryptKey: args.cryptKey,
       displayname: args.displayname,
+      userhash: args.userhash,
       /* id: args.socketid, */
       purpose: args.purpose,
       lastaccess: Date.now().toString()
