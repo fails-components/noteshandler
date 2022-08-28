@@ -36,7 +36,9 @@ export class NotesConnection {
   }
 
   async SocketHandlerNotes(socket) {
-    const address = socket.client.conn.remoteAddress
+    const address = socket.handshake.headers['x-forwarded-for']
+      .split(',')
+      .map((el) => el.trim()) || [socket.client.conn.remoteAddress]
     console.log('Notes %s with ip %s  connected', socket.id, address)
     console.log('Notes name', socket.decoded_token.name)
     console.log('Notes lecture uuid', socket.decoded_token.lectureuuid)
