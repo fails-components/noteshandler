@@ -71,7 +71,8 @@ const initServer = async () => {
     datadir: cfg.getDataDir(),
     dataurl: cfg.getURL('data'),
     webservertype: cfg.getWSType(),
-    privateKey: cfg.getStatSecret()
+    privateKey: cfg.getStatSecret(),
+    swift: cfg.getSwift()
   })
 
   // may be move the io also inside the object, on the other hand, I can not insert middleware anymore
