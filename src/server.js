@@ -34,17 +34,33 @@ const initServer = async () => {
   const cfg = new FailsConfig()
 
   // this should be read only replica
-  const redisclient = redis.createClient({
-    socket: { port: cfg.redisPort(), host: cfg.redisHost() },
-    password: cfg.redisPass()
-  })
+  let rediscl
+  let redisclusterconfig
+  if (cfg.getRedisClusterConfig)
+    redisclusterconfig = cfg.getRedisClusterConfig()
+  if (!redisclusterconfig) {
+    console.log(
+      'Connect to redis database with host:',
+      cfg.redisHost(),
+      'and port:',
+      cfg.redisPort()
+    )
+    rediscl = redis.createClient({
+      socket: { port: cfg.redisPort(), host: cfg.redisHost() },
+      password: cfg.redisPass()
+    })
+  } else {
+    // cluster case
+    console.log('Connect to redis cluster with config:', redisclusterconfig)
+    rediscl = redis.createCluster(redisclusterconfig)
+  }
 
-  await redisclient.connect()
+  await rediscl.connect()
   console.log('redisclient connected')
 
   // and yes pub sub is also read only so we need a mechanism for chat....
-  const redisclpub = redisclient.duplicate()
-  const redisclsub = redisclient.duplicate()
+  const redisclpub = rediscl.duplicate()
+  const redisclsub = rediscl.duplicate()
 
   await Promise.all([redisclpub.connect(), redisclsub.connect()])
 
@@ -58,13 +74,13 @@ const initServer = async () => {
   const server = createServer()
 
   const notessecurity = new FailsJWTSigner({
-    redis: redisclient,
+    redis: rediscl,
     type: 'notes',
     expiresIn: '10m',
     secret: cfg.getKeysSecret()
   })
   const notesverifier = new FailsJWTVerifier({
-    redis: redisclient,
+    redis: rediscl,
     type: 'notes'
   })
   const assets = new FailsAssets({
@@ -99,7 +115,7 @@ const initServer = async () => {
   ioIns.adapter(createAdapter(redisclpub, redisclsub))
 
   const nsconn = new NotesConnection({
-    redis: redisclient,
+    redis: rediscl,
     mongo: mongodb,
     notepadio: notepadio,
     screenio: screenio,
