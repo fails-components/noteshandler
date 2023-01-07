@@ -106,7 +106,8 @@ const initServer = async () => {
   const ioIns = new Server(server, {
     cors: cors,
     path: '/notes.io',
-    serveClient: false
+    serveClient: false,
+    transports: ['websocket']
   })
   const notepadio = ioIns.of('/notepads')
   const screenio = ioIns.of('/screens')
