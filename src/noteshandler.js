@@ -45,6 +45,7 @@ export class NotesConnection {
       socketid: socket.id,
       lectureuuid: socket.decoded_token.lectureuuid,
       name: socket.decoded_token.name,
+      appversion: socket.decoded_token.appversion,
       purpose: 'notes'
     }
 
@@ -179,6 +180,7 @@ export class NotesConnection {
       purpose: 'notes', // in case a bug is there, no one should escape the realm
       name: oldtoken.name,
       user: oldtoken.user,
+      appversion: oldtoken.appversion,
       noteshandler: this.noteshandlerURL,
       maxrenew: oldtoken.maxrenew - 1
     }
