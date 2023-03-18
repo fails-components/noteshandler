@@ -32,6 +32,7 @@ export class NotesConnection extends CommonConnection {
     this.noteshandlerURL = args.noteshandlerURL
 
     this.signNotesJwt = args.signNotesJwt
+    this.signAvsJwt = args.signAvsJwt
 
     this.SocketHandlerNotes = this.SocketHandlerNotes.bind(this)
   }
@@ -54,6 +55,10 @@ export class NotesConnection extends CommonConnection {
     }
 
     let curtoken = socket.decoded_token
+    let routerres
+    let routerurl = new Promise((resolve) => {
+      routerres = resolve
+    })
 
     // console.log('notes connected')
 
@@ -84,7 +89,6 @@ export class NotesConnection extends CommonConnection {
       const readypresinfo = await presinfo
       socket.emit('presinfo', readypresinfo)
     }
-
     this.emitAVOffers(socket, purenotes)
 
     socket.on(
@@ -159,6 +163,61 @@ export class NotesConnection extends CommonConnection {
         } else callback({ error: 'failure' })
       }.bind(this)
     )
+
+    socket.on('getrouting', async (cmd, callback) => {
+      if (
+        cmd &&
+        cmd.id &&
+        cmd.dir &&
+        cmd.dir === 'in' /* || cmd.dir === 'out' */ // a notes can only receive, later with special permission
+      ) {
+        try {
+          let toid
+          Promise.any([
+            routerurl,
+            new Promise((resolve, reject) => {
+              toid = setTimeout(reject, 20 * 1000)
+            })
+          ])
+          if (toid) clearTimeout(toid)
+          toid = undefined
+          this.getRouting(purenotes, cmd, await routerurl, callback)
+        } catch (error) {
+          callback({ error: 'getrouting: timeout or error: ' + error })
+        }
+      } else callback({ error: 'getrouting: malformed request' })
+    })
+
+    socket.on('gettransportinfo', (cmd, callback) => {
+      let geopos
+      if (cmd && cmd.geopos && cmd.geopos.longitude && cmd.geopos.latitude)
+        geopos = {
+          longitude: cmd.geopos.longitude,
+          latitude: cmd.geopos.latitude
+        }
+      this.getTransportInfo(
+        {
+          ipaddress: address,
+          geopos,
+          lectureuuid: purenotes.lectureuuid,
+          clientid: socket.id,
+          canWrite: false
+        },
+        (ret) => {
+          if (ret.url) {
+            if (routerres) {
+              const res = routerres
+              routerres = undefined
+              res(ret.url)
+            }
+            routerurl = ret.url
+          } else routerurl = undefined
+          callback(ret)
+        }
+      ).catch((error) => {
+        console.log('Problem in getTransportInfo', error)
+      })
+    })
 
     socket.on('keyInfo', (cmd) => {
       if (cmd.cryptKey && cmd.signKey) {

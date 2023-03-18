@@ -19,6 +19,9 @@
 */
 
 import { commandOptions } from 'redis'
+import CIDRMatcher from 'cidr-matcher'
+import { serialize as BSONserialize } from 'bson'
+import { createHash, webcrypto as crypto } from 'crypto'
 
 export class CommonConnection {
   async getBgpdf(notepadscreenid) {
@@ -260,5 +263,352 @@ export class CommonConnection {
 
   getRoomName(uuid) {
     return uuid
+  }
+
+  async getRouting(args, cmd, routerurl, callback) {
+    const majorid = args.lectureuuid
+    const clientid = args.lectureuuid + ':' + cmd.id
+    const clientidpure = cmd.id
+
+    let tickets // routing tickets
+
+    let hops = []
+
+    const options = {
+      projection: {
+        _id: 0,
+        url: 1,
+        region: 1,
+        key: 1,
+        spki: 1,
+        primaryRealms: { $elemMatch: { $eq: majorid } },
+        hashSalt: 1,
+        localClients: { $elemMatch: { $eq: clientid } },
+        remoteClients: { $elemMatch: { $eq: clientid } }
+      }
+    }
+
+    try {
+      const routercol = this.mongo.collection('avsrouters')
+      // first hop the actual router client
+      hops.push(
+        routercol.findOne(
+          {
+            url: routerurl
+          },
+          options
+        )
+      )
+      if (cmd.dir === 'in') {
+        // this is the clients perspective, so what is coming in
+        // for 'out' we have all we need
+        // now we need the router with the actual target client
+        hops.push(
+          routercol.findOne(
+            {
+              localClients: clientid
+            },
+            options
+          )
+        )
+        // now we have to find out, if these two are in the same region
+        await Promise.all(hops)
+        const first = await hops[0]
+        const last = await hops[1]
+        // in this case we need two more routers
+        if (!first) throw new Error('router not found')
+        if (!last) {
+          console.log('target client not found ' + clientid)
+          callback({ notfound: clientid })
+          return
+        }
+        let inspos = 1
+        // console.log('first debug', first, majorid)
+        // console.log('last debug', last)
+        if (!first.localClients) first.localClients = []
+        if (!first.remoteClients) first.remoteClients = []
+        if (!first.primaryRealms) first.primaryRealms = []
+        if (!last.localClients) last.localClients = []
+        if (!last.primaryClients) last.primaryClients = []
+        if (!last.primaryRealms) last.primaryRealms = []
+        if (!first.localClients.includes(clientid)) {
+          if (
+            !first.primaryRealms.includes(majorid) &&
+            first.region !== last.region
+          ) {
+            hops.splice(
+              inspos,
+              0,
+              routercol.findOne(
+                {
+                  region: first.region,
+                  primaryRealms: majorid
+                },
+                options
+              )
+            )
+            inspos++
+          }
+          if (
+            (!last.primaryRealms || !last.primaryRealms.includes(majorid)) &&
+            first.region !== last.region
+          ) {
+            hops.splice(
+              inspos,
+              0,
+              routercol.findOne(
+                {
+                  region: last.region,
+                  primaryRealms: majorid
+                },
+                options
+              )
+            )
+            inspos++
+          }
+          // we got everything
+        } else {
+          hops.pop()
+        }
+      }
+      hops = await Promise.all(hops)
+      // now we create routing information, from the hops
+      tickets = (await Promise.all(hops))
+        .map(async (ele, index, array) => {
+          const salt = ele.hashSalt
+          const calcHash = async (input) => {
+            const hash = createHash('sha256')
+            hash.update(input)
+            hash.update(salt)
+            return hash.digest('base64')
+          }
+
+          const cid = await calcHash(clientidpure)
+          const mid = await calcHash(majorid)
+          const ret = {
+            client: mid + ':' + cid,
+            realm: mid
+          }
+          if (index < array.length - 1) {
+            ret.next = array[index + 1].url
+            ret.nextspki = array[index + 1].spki
+          }
+          return { data: ret, key: ele.key }
+        })
+        .map(async (ele) => {
+          // ok we now need to encrypt it
+          try {
+            const el = await ele
+            const aeskey = await crypto.subtle.generateKey(
+              {
+                name: 'AES-GCM',
+                length: 256
+              },
+              true,
+              ['encrypt', 'decrypt']
+            )
+            const iv = crypto.getRandomValues(new Uint8Array(12))
+            const retval = {
+              aeskey: await crypto.subtle.encrypt(
+                {
+                  name: 'RSA-OAEP'
+                },
+                await crypto.subtle.importKey(
+                  'jwk',
+                  el.key,
+                  {
+                    name: 'RSA-OAEP',
+                    modulusLength: 4096,
+                    publicExponent: new Uint8Array([1, 0, 1]),
+                    hash: 'SHA-256'
+                  },
+                  true,
+                  ['encrypt']
+                ),
+                await crypto.subtle.exportKey('raw', aeskey)
+              ),
+              payload: await crypto.subtle.encrypt(
+                {
+                  name: 'AES-GCM',
+                  iv
+                },
+                aeskey,
+                BSONserialize(el.data)
+              ),
+              iv
+            }
+            return retval
+          } catch (error) {
+            console.log('error exporting key', error)
+            return null
+          }
+        })
+      tickets = await Promise.all(tickets)
+    } catch (error) {
+      console.log('getRouting error', error)
+      callback({ error: String(error) })
+      return
+    }
+    callback({ tickets })
+  }
+
+  async getTransportInfo(args, callback) {
+    const regions = []
+    let router
+    let token = {}
+    try {
+      // iterate over all regions until something matches
+      const regioncol = this.mongo.collection('avsregion')
+      {
+        const regioncursorip = regioncol
+          .find({ ipfilter: { $exists: true } })
+          .project({ _id: 0, name: 1, hmac: 1, ipfilter: 1 })
+        await regioncursorip.forEach((el) => {
+          if (el.ipfilter) {
+            const matcher = new CIDRMatcher(el.ipfilter)
+            if (matcher.containsAny(args.ipaddress)) {
+              regions.push(el)
+            }
+          } else regions.push(el)
+        })
+      }
+      if (args.geopos) {
+        const regioncursorgeo = regioncol.aggregate([
+          {
+            $geoNear: {
+              near: args.geopos,
+              spherical: true,
+              key: 'geopos',
+              query: { geopos: { $exists: true } },
+              distanceField: 'dist.calculated'
+            }
+          }
+        ])
+        await regioncursorgeo.forEach((el) => {
+          if (el.geopos && !el.ipfilter) {
+            regions.push(el)
+          }
+        })
+      }
+      {
+        const remain = { ipfilter: { $exists: false } }
+        if (args.geopos) remain.geopos = { $exists: false }
+        const regioncursor = regioncol.find(remain)
+        await regioncursor.forEach((el) => {
+          if (!el.ipfilter) {
+            regions.push(el)
+          }
+        })
+      }
+      // we got our regions list, now we iterate over all regions until
+      // we find a suitable router
+
+      const routercol = this.mongo.collection('avsrouters')
+      let primary
+      let region
+      while (regions.length > 0 && !router) {
+        region = regions.shift()
+        primary = true
+        let cursor = routercol
+          .find({
+            region: { $eq: region.name },
+            $expr: { $gt: ['$maxClients', '$numClients'] },
+            primaryRealms: args.lectureuuid
+          })
+          .sort({ numClients: -1 })
+        if ((await cursor.count()) < 1) {
+          cursor.close()
+          primary = false
+          // go to secondary realm
+          cursor = routercol
+            .find({
+              region: { $eq: region.name },
+              $expr: { $gt: ['$maxClients', '$numClients'] },
+              localClients: { $regex: args.lectureuuid + ':[a-zA-Z0-9-]+' } // may be remoteClients
+            })
+            .sort({ numClients: -1 })
+          if ((await cursor.count()) < 1) {
+            primary = false
+            cursor.close()
+            // last try, a new router
+            cursor = routercol
+              .find({
+                region: { $eq: region.name },
+                $and: [
+                  { $expr: { $gt: ['$maxClients', '$numClients'] } },
+                  { $expr: { $gt: ['$maxRealms', '$numRealms'] } }
+                ]
+              })
+              .sort({ maxRealms: -1, numClients: -1 })
+            if ((await cursor.count()) < 1) {
+              continue
+            }
+          }
+        }
+        router = await cursor.next()
+        cursor.close()
+      }
+      if (!router) {
+        callback({
+          error: 'no router found'
+        })
+        return
+      }
+
+      // ok we got a cursor...
+      // if it is not primary, we have to find out, if there is a primary
+      let setprimary = false
+      if (!primary) {
+        const dprimary = await routercol.findOne({
+          region: { $eq: region.name },
+          primaryRealms: args.lectureuuid
+        })
+        if (!dprimary) setprimary = true
+      }
+      const update = {
+        $addToSet: {
+          localClients: args.lectureuuid + ':' + args.clientid
+        }
+      }
+      const calcHash = async (input) => {
+        const hash = createHash('sha256')
+        hash.update(input)
+        // console.log('debug router info', router)
+        hash.update(router.hashSalt)
+        return hash.digest('base64')
+      }
+
+      const realmhash = calcHash(args.lectureuuid)
+      const clienthash = calcHash(args.clientid)
+      update.$set = {}
+      update.$set['transHash.' + (await realmhash)] = args.lectureuuid
+      update.$set['transHash.' + (await clienthash)] = args.clientid
+
+      // todo hash table
+      token.accessRead = [
+        (await realmhash).replace(/[+/]/g, '\\$&') + ':[a-zA-Z0-9-/+=]+'
+      ]
+      if (args.canWrite) token.accessWrite = token.accessRead
+      if (setprimary) {
+        if (!update.$addToSet) update.$addToSet = {}
+        update.$addToSet.primaryRealms = args.lectureuuid
+      }
+      if (setprimary || primary) token.primaryRealm = await realmhash
+      token.realm = await realmhash
+      token.client = await clienthash
+
+      await routercol.updateOne({ url: router.url }, update)
+    } catch (error) {
+      console.log('getTransportError', error)
+    }
+    token = this.signAvsJwt(token)
+
+    // perfect we have enough information to give the transport info back
+    callback({
+      url: router.url,
+      wsurl: router.wsurl,
+      spki: router.spki,
+      token: await token
+    })
   }
 }

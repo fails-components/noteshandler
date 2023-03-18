@@ -79,6 +79,12 @@ const initServer = async () => {
     expiresIn: '10m',
     secret: cfg.getKeysSecret()
   })
+  const avssecurity = new FailsJWTSigner({
+    redis: rediscl,
+    type: 'avs',
+    expiresIn: '1m',
+    secret: cfg.getKeysSecret()
+  })
   const notesverifier = new FailsJWTVerifier({
     redis: rediscl,
     type: 'notes'
@@ -123,6 +129,7 @@ const initServer = async () => {
     screenio: screenio,
     notesio: notesio,
     signNotesJwt: notessecurity.signToken,
+    signAvsJwt: avssecurity.signToken,
     getFileURL: assets.getFileURL,
     noteshandlerURL: cfg.getURL('notes'),
     screenUrl: cfg.getURL('web'),
