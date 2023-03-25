@@ -110,6 +110,9 @@ export class NotesConnection extends CommonConnection {
         this.notepadio.to(purenotes.roomname).emit('chatquestion', {
           displayname: displayname,
           text: cmd.text,
+          encData: cmd.encData,
+          keyindex: cmd.keyindex,
+          iv: cmd.iv,
           userhash: userhash
         })
 
