@@ -12,7 +12,7 @@
   "source": "src/server.js",
   "type": "module",
   "engines": {
-    "node": ">=16"
+    "node": ">=18"
   },
   "scripts": {
     "start": "node src/server.js",
