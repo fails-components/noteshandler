@@ -27,6 +27,7 @@ export class NotesConnection extends CommonConnection {
     this.mongo = args.mongo
     this.notesio = args.notesio
     this.notepadio = args.notepadio
+    this.screenio = args.screenio
     this.getFileURL = args.getFileURL
 
     this.noteshandlerURL = args.noteshandlerURL
@@ -90,6 +91,7 @@ export class NotesConnection extends CommonConnection {
       socket.emit('presinfo', readypresinfo)
     }
     this.emitAVOffers(socket, purenotes)
+    this.emitVideoquestions(socket, purenotes)
 
     socket.on(
       'reauthor',
@@ -113,12 +115,29 @@ export class NotesConnection extends CommonConnection {
           encData: cmd.encData,
           keyindex: cmd.keyindex,
           iv: cmd.iv,
+          videoquestion: cmd.videoquestion
+            ? { id: purenotes.socketid }
+            : undefined,
           userhash: userhash
         })
 
         // console.log("chat send", cmd.text,socket.decoded_token);
       }
       // console.log("chatquestion",cmd);
+    })
+
+    socket.on('closevideoquestion', (cmd) => {
+      this.closeVideoQuestion(purenotes, { id: purenotes.socketid }).catch(
+        (error) => {
+          console.log('Problem in closeVideoQuestion', error)
+        }
+      )
+    })
+
+    socket.on('avoffer', (cmd) => {
+      this.handleVQoffer(purenotes, cmd).catch((error) => {
+        console.log('Problem in handleVQoffer', error)
+      })
     })
 
     socket.on(
@@ -168,15 +187,11 @@ export class NotesConnection extends CommonConnection {
     )
 
     socket.on('getrouting', async (cmd, callback) => {
-      if (
-        cmd &&
-        cmd.id &&
-        cmd.dir &&
-        cmd.dir === 'in' /* || cmd.dir === 'out' */ // a notes can only receive, later with special permission
-      ) {
+      let tempOut
+      if (cmd.dir === 'out' && cmd.id === purenotes.socketid) {
+        let toid
         try {
-          let toid
-          Promise.any([
+          await Promise.any([
             routerurl,
             new Promise((resolve, reject) => {
               toid = setTimeout(reject, 20 * 1000)
@@ -184,7 +199,34 @@ export class NotesConnection extends CommonConnection {
           ])
           if (toid) clearTimeout(toid)
           toid = undefined
-          this.getRouting(purenotes, cmd, await routerurl, callback)
+          tempOut = await this.getTempOutTransport(purenotes, await routerurl)
+        } catch (error) {
+          callback({ error: 'getrouting: timeout or error tempout: ' + error })
+        }
+      }
+
+      if (
+        cmd &&
+        cmd.id &&
+        cmd.dir &&
+        (cmd.dir === 'in' || tempOut) /* || cmd.dir === 'out' */ // a notes can only receive, later with special permission
+      ) {
+        try {
+          let toid
+          await Promise.any([
+            routerurl,
+            new Promise((resolve, reject) => {
+              toid = setTimeout(reject, 20 * 1000)
+            })
+          ])
+          if (toid) clearTimeout(toid)
+          toid = undefined
+          this.getRouting(
+            purenotes,
+            { ...cmd, tempOut },
+            await routerurl,
+            callback
+          )
         } catch (error) {
           callback({ error: 'getrouting: timeout or error: ' + error })
         }
@@ -234,7 +276,7 @@ export class NotesConnection extends CommonConnection {
       this.handleKeymasterQuery(purenotes)
     })
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
       console.log(
         'Notes Client %s with ip %s  disconnected',
         socket.id,
@@ -243,13 +285,39 @@ export class NotesConnection extends CommonConnection {
       if (purenotes) {
         if (purenotes.roomname) {
           socket.leave(purenotes.roomname)
-          this.redis.hDel(
-            'lecture:' + purenotes.lectureuuid + ':idents',
-            purenotes.socketid
-          )
-          this.notepadio
-            .to(purenotes.roomname)
-            .emit('identDelete', { id: purenotes.socketid })
+          try {
+            const proms = []
+            proms.push(
+              this.redis.hDel(
+                'lecture:' + purenotes.lectureuuid + ':idents',
+                purenotes.socketid
+              )
+            )
+            proms.push(
+              this.redis.hDel(
+                'lecture:' + purenotes.lectureuuid + ':videoquestion',
+                'permitted:' + purenotes.socketid
+              )
+            )
+            this.notepadio
+              .to(purenotes.roomname)
+              .emit('identDelete', { id: purenotes.socketid })
+
+            const promres = await Promise.all(proms)
+            if (promres[1] > 0) {
+              this.notepadio
+                .to(purenotes.roomname)
+                .emit('closevideoquestion', { id: purenotes.socketid })
+              this.screenio
+                .to(purenotes.roomname)
+                .emit('closevideoquestion', { id: purenotes.socketid })
+              this.notesio
+                .to(purenotes.roomname)
+                .emit('closevideoquestion', { id: purenotes.socketid })
+            }
+          } catch (error) {
+            console.log('Problem disconnect:', error)
+          }
           // console.log('notes disconnected leave room', purenotes.roomname)
           purenotes.roomname = null
         }
@@ -275,6 +343,91 @@ export class NotesConnection extends CommonConnection {
     if (!oldtoken.maxrenew || !(oldtoken.maxrenew > 0))
       return { error: 'maxrenew token failed', oldtoken: oldtoken }
     return { token: await this.signNotesJwt(newtoken), decoded: newtoken }
+  }
+
+  async getTempOutTransport(args, routerurl) {
+    try {
+      // first check permissions
+      const exists = await this.redis.hExists(
+        'lecture:' + args.lectureuuid + ':videoquestion',
+        'permitted:' + args.socketid
+      )
+      if (!exists) return
+      // very well we have the permission, so generate a token for temperory perms
+
+      const routercol = this.mongo.collection('avsrouters')
+
+      const majorid = args.lectureuuid
+      const clientid = args.lectureuuid + ':' + args.socketid
+      const router = await routercol.findOne(
+        {
+          url: routerurl
+        },
+        {
+          projection: {
+            _id: 0,
+            url: 1,
+            region: 1,
+            key: 1,
+            spki: 1,
+            primaryRealms: { $elemMatch: { $eq: majorid } },
+            hashSalt: 1,
+            localClients: { $elemMatch: { $eq: clientid } },
+            remoteClients: { $elemMatch: { $eq: clientid } }
+          }
+        }
+      )
+
+      const calcHash = async (input) => {
+        const hash = createHash('sha256')
+        hash.update(input)
+        // console.log('debug router info', router)
+        hash.update(router.hashSalt)
+        return hash.digest('base64')
+      }
+
+      const realmhash = calcHash(args.lectureuuid)
+      const clienthash = calcHash(args.socketid)
+
+      let token = {}
+      // todo hash table
+      token.accessWrite = [
+        (await realmhash).replace(/[+/]/g, '\\$&') + ':[a-zA-Z0-9-/+=]+'
+      ]
+      token.realm = await realmhash
+      token.client = await clienthash
+      token = this.signAvsJwt(token)
+      return await token
+    } catch (error) {
+      console.log('Problem getTempOutTransport', error)
+      throw new Error()
+    }
+  }
+
+  async handleVQoffer(args, cmd) {
+    // ok to things to do, inform the others about the offer
+    // and store the information in redis
+
+    if (
+      cmd.type !== 'video' &&
+      cmd.type !== 'audio' /* && cmd.type !== 'screen' */
+    ) {
+      return
+    }
+
+    const roomname = this.getRoomName(args.lectureuuid)
+
+    const message = {
+      id: args.socketid,
+      type: cmd.type,
+      db: cmd.db // loundness in case of audio
+    }
+
+    this.notepadio.to(roomname).emit('vqoffer', message)
+    this.screenio.to(roomname).emit('vqoffer', message)
+    this.notesio.to(roomname).emit('vqoffer', message)
+
+    // VQ offers are not saved
   }
 
   async getPresentationinfo(args) {

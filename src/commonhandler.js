@@ -258,7 +258,48 @@ export class CommonConnection {
         time: alloffers[label]
       })
     }
-    socket.emit('avofferList', { offers })
+    if (offers.length > 0) socket.emit('avofferList', { offers })
+  }
+
+  async emitVideoquestions(socket, args) {
+    const allquestions = await this.redis.hGetAll(
+      'lecture:' + args.lectureuuid + ':videoquestion'
+    )
+    const vquestions = []
+    for (const label in allquestions) {
+      try {
+        const labels = label.split(':')
+        const obj = JSON.parse(allquestions[label])
+        vquestions.push({
+          id: labels[1],
+          ...obj
+        })
+      } catch (error) {
+        console.log('Problem vquestion parse', error)
+      }
+    }
+    if (vquestions.length > 0) socket.emit('videoquestionList', { vquestions })
+  }
+
+  async closeVideoQuestion(args, cmd) {
+    if (!cmd.id) return // do not proceed without id.
+    const roomname = this.getRoomName(args.lectureuuid)
+
+    const message = {
+      id: cmd.id
+    }
+
+    this.notepadio.to(roomname).emit('closevideoquestion', message)
+    this.screenio.to(roomname).emit('closevideoquestion', message)
+    this.notesio.to(roomname).emit('closevideoquestion', message)
+
+    try {
+      await this.redis.hDel('lecture:' + args.lectureuuid + ':videoquestion', [
+        'permitted:' + cmd.id
+      ])
+    } catch (error) {
+      console.log('problem in closeVideoQuestion', error)
+    }
   }
 
   getRoomName(uuid) {
@@ -392,6 +433,9 @@ export class CommonConnection {
           if (index < array.length - 1) {
             ret.next = array[index + 1].url
             ret.nextspki = array[index + 1].spki
+          }
+          if (index === 0 && cmd.tempOut) {
+            ret.tempOut = cmd.tempOut
           }
           return { data: ret, key: ele.key }
         })
