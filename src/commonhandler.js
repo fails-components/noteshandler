@@ -340,6 +340,10 @@ export class CommonConnection {
           options
         )
       )
+      if (cmd.dir === 'out' && cmd.id !== args.socketid) {
+        // if we are sending out, it must be the clients own id!
+        throw new Error('Sending data with foreign id is not permitted')
+      }
       if (cmd.dir === 'in') {
         // this is the clients perspective, so what is coming in
         // for 'out' we have all we need
@@ -632,7 +636,14 @@ export class CommonConnection {
       token.accessRead = [
         (await realmhash).replace(/[+/]/g, '\\$&') + ':[a-zA-Z0-9-/+=]+'
       ]
-      if (args.canWrite) token.accessWrite = token.accessRead
+      if (args.canWrite) {
+        // you can only write to your own! Readinf everything is fine
+        token.accessWrite = [
+          (await realmhash).replace(/[+/]/g, '\\$&') +
+            ':' +
+            (await clienthash).replace(/[+/]/g, '\\$&')
+        ]
+      }
       if (setprimary) {
         if (!update.$addToSet) update.$addToSet = {}
         update.$addToSet.primaryRealms = args.lectureuuid

@@ -392,7 +392,9 @@ export class NotesConnection extends CommonConnection {
       let token = {}
       // todo hash table
       token.accessWrite = [
-        (await realmhash).replace(/[+/]/g, '\\$&') + ':[a-zA-Z0-9-/+=]+'
+        (await realmhash).replace(/[+/]/g, '\\$&') +
+          ':' +
+          (await clienthash).replace(/[+/]/g, '\\$&')
       ]
       token.realm = await realmhash
       token.client = await clienthash
