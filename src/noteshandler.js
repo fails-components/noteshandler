@@ -18,25 +18,30 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 import { createHash } from 'crypto'
-import { commandOptions } from 'redis'
+import { CommonConnection } from './commonhandler.js'
 
-export class NotesConnection {
+export class NotesConnection extends CommonConnection {
   constructor(args) {
+    super(args)
     this.redis = args.redis
     this.mongo = args.mongo
     this.notesio = args.notesio
     this.notepadio = args.notepadio
+    this.screenio = args.screenio
     this.getFileURL = args.getFileURL
 
     this.noteshandlerURL = args.noteshandlerURL
 
     this.signNotesJwt = args.signNotesJwt
+    this.signAvsJwt = args.signAvsJwt
 
     this.SocketHandlerNotes = this.SocketHandlerNotes.bind(this)
   }
 
   async SocketHandlerNotes(socket) {
-    const address = socket.client.conn.remoteAddress
+    const address = socket.handshake.headers['x-forwarded-for']
+      .split(',')
+      .map((el) => el.trim()) || [socket.client.conn.remoteAddress]
     console.log('Notes %s with ip %s  connected', socket.id, address)
     console.log('Notes name', socket.decoded_token.name)
     console.log('Notes lecture uuid', socket.decoded_token.lectureuuid)
@@ -45,11 +50,16 @@ export class NotesConnection {
       socketid: socket.id,
       lectureuuid: socket.decoded_token.lectureuuid,
       name: socket.decoded_token.name,
+      displayname: socket.decoded_token.user.displayname,
       appversion: socket.decoded_token.appversion,
       purpose: 'notes'
     }
 
     let curtoken = socket.decoded_token
+    let routerres
+    let routerurl = new Promise((resolve) => {
+      routerres = resolve
+    })
 
     // console.log('notes connected')
 
@@ -58,6 +68,14 @@ export class NotesConnection {
     // console.log('notes send board data')
     this.sendBoardsToSocket(purenotes.lectureuuid, socket)
     purenotes.roomname = this.getRoomName(purenotes.lectureuuid)
+    {
+      const messagehash = createHash('sha256')
+      const useruuid = socket.decoded_token.user.useruuid
+      // now we create a hash that can be used to identify a user, if and only if,
+      // access to this database is available and not between lectures!
+      messagehash.update(useruuid + purenotes.lectureuuid)
+      purenotes.userhash = messagehash.digest('hex')
+    }
     // console.log('notes is connected to notepad, join room', purenotes.roomname)
     socket.join(purenotes.roomname)
 
@@ -72,40 +90,55 @@ export class NotesConnection {
       const readypresinfo = await presinfo
       socket.emit('presinfo', readypresinfo)
     }
+    this.emitAVOffers(socket, purenotes)
+    this.emitVideoquestions(socket, purenotes)
 
     socket.on(
       'reauthor',
       async function () {
         // we use the information from the already present authtoken
+        this.addUpdateCryptoIdent(purenotes)
         const token = await this.getNotesToken(curtoken)
         curtoken = token.decoded
         socket.emit('authtoken', { token: token.token })
       }.bind(this)
     )
 
-    socket.on(
-      'chatquestion',
-      function (cmd) {
-        if (cmd.text) {
-          const messagehash = createHash('sha256')
-          const useruuid = socket.decoded_token.user.useruuid
-          const displayname = socket.decoded_token.user.displayname
-          // now we create a hash that can be used to identify a user, if and only if,
-          // access to this database is available and not between lectures!
-          messagehash.update(useruuid + purenotes.lectureuuid)
-          const userhash = messagehash.digest('hex')
+    socket.on('chatquestion', (cmd) => {
+      if (cmd.text) {
+        const displayname = socket.decoded_token.user.displayname
+        const userhash = purenotes.userhash
 
-          this.notepadio.to(purenotes.roomname).emit('chatquestion', {
-            displayname: displayname,
-            text: cmd.text,
-            userhash: userhash
-          })
+        this.notepadio.to(purenotes.roomname).emit('chatquestion', {
+          displayname: displayname,
+          text: cmd.text,
+          encData: cmd.encData,
+          keyindex: cmd.keyindex,
+          iv: cmd.iv,
+          videoquestion: cmd.videoquestion
+            ? { id: purenotes.socketid }
+            : undefined,
+          userhash: userhash
+        })
 
-          // console.log("chat send", cmd.text,socket.decoded_token);
+        // console.log("chat send", cmd.text,socket.decoded_token);
+      }
+      // console.log("chatquestion",cmd);
+    })
+
+    socket.on('closevideoquestion', (cmd) => {
+      this.closeVideoQuestion(purenotes, { id: purenotes.socketid }).catch(
+        (error) => {
+          console.log('Problem in closeVideoQuestion', error)
         }
-        // console.log("chatquestion",cmd);
-      }.bind(this)
-    )
+      )
+    })
+
+    socket.on('avoffer', (cmd) => {
+      this.handleVQoffer(purenotes, cmd).catch((error) => {
+        console.log('Problem in handleVQoffer', error)
+      })
+    })
 
     socket.on(
       'castvote',
@@ -153,7 +186,97 @@ export class NotesConnection {
       }.bind(this)
     )
 
-    socket.on('disconnect', function () {
+    socket.on('getrouting', async (cmd, callback) => {
+      let tempOut
+      if (cmd.dir === 'out' && cmd.id === purenotes.socketid) {
+        let toid
+        try {
+          await Promise.any([
+            routerurl,
+            new Promise((resolve, reject) => {
+              toid = setTimeout(reject, 20 * 1000)
+            })
+          ])
+          if (toid) clearTimeout(toid)
+          toid = undefined
+          tempOut = await this.getTempOutTransport(purenotes, await routerurl)
+        } catch (error) {
+          callback({ error: 'getrouting: timeout or error tempout: ' + error })
+        }
+      }
+
+      if (
+        cmd &&
+        cmd.id &&
+        cmd.dir &&
+        (cmd.dir === 'in' || tempOut) /* || cmd.dir === 'out' */ // a notes can only receive, later with special permission
+      ) {
+        try {
+          let toid
+          await Promise.any([
+            routerurl,
+            new Promise((resolve, reject) => {
+              toid = setTimeout(reject, 20 * 1000)
+            })
+          ])
+          if (toid) clearTimeout(toid)
+          toid = undefined
+          this.getRouting(
+            purenotes,
+            { ...cmd, tempOut },
+            await routerurl,
+            callback
+          )
+        } catch (error) {
+          callback({ error: 'getrouting: timeout or error: ' + error })
+        }
+      } else callback({ error: 'getrouting: malformed request' })
+    })
+
+    socket.on('gettransportinfo', (cmd, callback) => {
+      let geopos
+      if (cmd && cmd.geopos && cmd.geopos.longitude && cmd.geopos.latitude)
+        geopos = {
+          longitude: cmd.geopos.longitude,
+          latitude: cmd.geopos.latitude
+        }
+      this.getTransportInfo(
+        {
+          ipaddress: address,
+          geopos,
+          lectureuuid: purenotes.lectureuuid,
+          clientid: socket.id,
+          canWrite: false
+        },
+        (ret) => {
+          if (ret.url) {
+            if (routerres) {
+              const res = routerres
+              routerres = undefined
+              res(ret.url)
+            }
+            routerurl = ret.url
+          } else routerurl = undefined
+          callback(ret)
+        }
+      ).catch((error) => {
+        console.log('Problem in getTransportInfo', error)
+      })
+    })
+
+    socket.on('keyInfo', (cmd) => {
+      if (cmd.cryptKey && cmd.signKey) {
+        purenotes.cryptKey = cmd.cryptKey
+        purenotes.signKey = cmd.signKey
+        this.addUpdateCryptoIdent(purenotes)
+      }
+    })
+
+    socket.on('keymasterQuery', () => {
+      this.handleKeymasterQuery(purenotes)
+    })
+
+    socket.on('disconnect', async () => {
       console.log(
         'Notes Client %s with ip %s  disconnected',
         socket.id,
@@ -162,6 +285,39 @@ export class NotesConnection {
       if (purenotes) {
         if (purenotes.roomname) {
           socket.leave(purenotes.roomname)
+          try {
+            const proms = []
+            proms.push(
+              this.redis.hDel(
+                'lecture:' + purenotes.lectureuuid + ':idents',
+                purenotes.socketid
+              )
+            )
+            proms.push(
+              this.redis.hDel(
+                'lecture:' + purenotes.lectureuuid + ':videoquestion',
+                'permitted:' + purenotes.socketid
+              )
+            )
+            this.notepadio
+              .to(purenotes.roomname)
+              .emit('identDelete', { id: purenotes.socketid })
+
+            const promres = await Promise.all(proms)
+            if (promres[1] > 0) {
+              this.notepadio
+                .to(purenotes.roomname)
+                .emit('closevideoquestion', { id: purenotes.socketid })
+              this.screenio
+                .to(purenotes.roomname)
+                .emit('closevideoquestion', { id: purenotes.socketid })
+              this.notesio
+                .to(purenotes.roomname)
+                .emit('closevideoquestion', { id: purenotes.socketid })
+            }
+          } catch (error) {
+            console.log('Problem disconnect:', error)
+          }
           // console.log('notes disconnected leave room', purenotes.roomname)
           purenotes.roomname = null
         }
@@ -189,140 +345,91 @@ export class NotesConnection {
     return { token: await this.signNotesJwt(newtoken), decoded: newtoken }
   }
 
-  async getBgpdf(notepadscreenid) {
-    let lecturedoc = {}
+  async getTempOutTransport(args, routerurl) {
     try {
-      const lecturescol = this.mongo.collection('lectures')
-      lecturedoc = await lecturescol.findOne(
-        { uuid: notepadscreenid.lectureuuid },
-        { projection: { _id: 0, backgroundpdfuse: 1, backgroundpdf: 1 } }
+      // first check permissions
+      const exists = await this.redis.hExists(
+        'lecture:' + args.lectureuuid + ':videoquestion',
+        'permitted:' + args.socketid
       )
-      // console.log("lecturedoc",lecturedoc);
-      if (
-        !lecturedoc.backgroundpdfuse ||
-        !lecturedoc.backgroundpdf ||
-        !lecturedoc.backgroundpdf.sha
-      )
-        return null
-      return this.getFileURL(lecturedoc.backgroundpdf.sha, 'application/pdf')
-    } catch (err) {
-      console.log('error in getBgpdf pictures', err)
-    }
-  }
+      if (!exists) return
+      // very well we have the permission, so generate a token for temperory perms
 
-  async getUsedPicts(notepadscreenid) {
-    let lecturedoc = {}
-    try {
-      const lecturescol = this.mongo.collection('lectures')
-      lecturedoc = await lecturescol.findOne(
-        { uuid: notepadscreenid.lectureuuid },
-        { projection: { _id: 0, usedpictures: 1 } }
-      )
-      // console.log("lecturedoc",lecturedoc);
-      if (!lecturedoc.usedpictures) return []
+      const routercol = this.mongo.collection('avsrouters')
 
-      return lecturedoc.usedpictures.map((el) => {
-        return {
-          name: el.name,
-          mimetype: el.mimetype,
-          sha: el.sha.buffer.toString('hex'),
-          url: this.getFileURL(el.sha.buffer, el.mimetype),
-          urlthumb: this.getFileURL(el.tsha.buffer, el.mimetype)
-        }
-      })
-      // ok now I have the picture, but I also have to generate the urls
-    } catch (err) {
-      console.log('error in getUsedPicts pictures', err)
-    }
-  }
-
-  async getLectDetail(notepadscreenid, socket) {
-    // TODO should be feed from mongodb
-
-    let lecturedoc = {}
-    try {
-      const lecturescol = this.mongo.collection('lectures')
-
-      const andquery = []
-
-      andquery.push({ uuid: notepadscreenid.lectureuuid })
-
-      // TODO add course stuff
-      // console.log("andquery", andquery);
-      lecturedoc = await lecturescol.findOne(
-        { uuid: notepadscreenid.lectureuuid },
+      const majorid = args.lectureuuid
+      const clientid = args.lectureuuid + ':' + args.socketid
+      const router = await routercol.findOne(
+        {
+          url: routerurl
+        },
         {
           projection: {
             _id: 0,
-            title: 1,
-            coursetitle: 1,
-            ownersdisplaynames: 1,
-            date: 1
+            url: 1,
+            region: 1,
+            key: 1,
+            spki: 1,
+            primaryRealms: { $elemMatch: { $eq: majorid } },
+            hashSalt: 1,
+            localClients: { $elemMatch: { $eq: clientid } },
+            remoteClients: { $elemMatch: { $eq: clientid } }
           }
         }
       )
-    } catch (err) {
-      console.log('error in get LectDetail', err)
-    }
 
-    const lectdetail = {
-      title: lecturedoc.title,
-      coursetitle: lecturedoc.coursetitle,
-      instructors: lecturedoc.ownersdisplaynames,
-      date: lecturedoc.date
+      const calcHash = async (input) => {
+        const hash = createHash('sha256')
+        hash.update(input)
+        // console.log('debug router info', router)
+        hash.update(router.hashSalt)
+        return hash.digest('base64')
+      }
+
+      const realmhash = calcHash(args.lectureuuid)
+      const clienthash = calcHash(args.socketid)
+
+      let token = {}
+      // todo hash table
+      token.accessWrite = [
+        (await realmhash).replace(/[+/]/g, '\\$&') +
+          ':' +
+          (await clienthash).replace(/[+/]/g, '\\$&')
+      ]
+      token.realm = await realmhash
+      token.client = await clienthash
+      token = this.signAvsJwt(token)
+      return await token
+    } catch (error) {
+      console.log('Problem getTempOutTransport', error)
+      throw new Error()
     }
-    // if (notepadscreenid.notepaduuid) lectdetail.notepaduuid=notepadscreenid.notepaduuid;
-    socket.emit('lecturedetail', lectdetail)
   }
 
-  // TODO
-  async sendBoardsToSocket(lectureuuid, socket) {
-    // we have to send first information about pictures
+  async handleVQoffer(args, cmd) {
+    // ok to things to do, inform the others about the offer
+    // and store the information in redis
 
-    const usedpict = await this.getUsedPicts({ lectureuuid: lectureuuid })
-    if (usedpict) {
-      socket.emit('pictureinfo', usedpict)
-    }
-    const bgpdf = await this.getBgpdf({ lectureuuid: lectureuuid })
-    if (bgpdf) {
-      socket.emit('bgpdfinfo', { bgpdfurl: bgpdf })
-    } else {
-      socket.emit('bgpdfinfo', { none: true })
+    if (
+      cmd.type !== 'video' &&
+      cmd.type !== 'audio' /* && cmd.type !== 'screen' */
+    ) {
+      return
     }
 
-    try {
-      const res = await this.redis.sMembers(
-        'lecture:' + lectureuuid + ':boards'
-      )
+    const roomname = this.getRoomName(args.lectureuuid)
 
-      // console.log('boards', res, 'lecture:' + lectureuuid + ':boards')
-      const length = res.length
-      let countdown = length
-      if (length === 0) socket.emit('reloadBoard', { last: true })
-      for (const index in res) {
-        const boardnum = res[index]
-        // console.log('sendBoardsToSocket', boardnum, lectureuuid)
-        try {
-          const res2 = await this.redis.get(
-            commandOptions({ returnBuffers: true }),
-            'lecture:' + lectureuuid + ':board' + boardnum
-          )
-
-          countdown--
-          // console.log('send reloadboard', boardnum, res2, length)
-          const send = {
-            number: boardnum,
-            data: res2,
-            last: countdown === 0
-          }
-          socket.emit('reloadBoard', send)
-        } catch (error) {
-          console.log('error in sendboard to sockets loop', error)
-        }
-      }
-    } catch (error) {
-      console.log('error in sendboard to sockets', error)
+    const message = {
+      id: args.socketid,
+      type: cmd.type,
+      db: cmd.db // loundness in case of audio
     }
+
+    this.notepadio.to(roomname).emit('vqoffer', message)
+    this.screenio.to(roomname).emit('vqoffer', message)
+    this.notesio.to(roomname).emit('vqoffer', message)
+
+    // VQ offers are not saved
   }
 
   async getPresentationinfo(args) {
@@ -356,9 +463,5 @@ export class NotesConnection {
       console.log('getPollInfo failed', error)
       return null
     }
-  }
-
-  getRoomName(uuid) {
-    return uuid
   }
 }
