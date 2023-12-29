@@ -52,6 +52,7 @@ export class NotesConnection extends CommonConnection {
       name: socket.decoded_token.name,
       displayname: socket.decoded_token.user.displayname,
       appversion: socket.decoded_token.appversion,
+      features: socket.decoded_token.features,
       purpose: 'notes'
     }
 
@@ -337,6 +338,7 @@ export class NotesConnection extends CommonConnection {
       name: oldtoken.name,
       user: oldtoken.user,
       appversion: oldtoken.appversion,
+      features: oldtoken.features,
       noteshandler: this.noteshandlerURL,
       maxrenew: oldtoken.maxrenew - 1
     }
