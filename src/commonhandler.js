@@ -24,51 +24,58 @@ import { serialize as BSONserialize } from 'bson'
 import { createHash, webcrypto as crypto } from 'crypto'
 
 export class CommonConnection {
-  async getBgpdf(notepadscreenid) {
+  async getUsedAssets(notepadscreenid) {
     let lecturedoc = {}
     try {
       const lecturescol = this.mongo.collection('lectures')
       lecturedoc = await lecturescol.findOne(
         { uuid: notepadscreenid.lectureuuid },
         {
-          projection: { _id: 0, backgroundpdfuse: 1, backgroundpdf: 1 }
+          projection: {
+            _id: 0,
+            usedpictures: 1,
+            backgroundpdfuse: 1,
+            backgroundpdf: 1,
+            usedipynbs: 1
+          }
         }
       )
-      // console.log("lecturedoc",lecturedoc);
-      if (
-        !lecturedoc.backgroundpdfuse ||
-        !lecturedoc.backgroundpdf ||
-        !lecturedoc.backgroundpdf.sha
-      )
-        return null
-      return this.getFileURL(lecturedoc.backgroundpdf.sha, 'application/pdf')
-    } catch (err) {
-      console.log('error in getBgpdf pictures', err)
-    }
-  }
 
-  async getUsedPicts(notepadscreenid) {
-    let lecturedoc = {}
-    try {
-      const lecturescol = this.mongo.collection('lectures')
-      lecturedoc = await lecturescol.findOne(
-        { uuid: notepadscreenid.lectureuuid },
-        {
-          projection: { _id: 0, usedpictures: 1 }
-        }
-      )
-      // console.log("lecturedoc",lecturedoc);
-      if (!lecturedoc.usedpictures) return []
+      return {
+        usedpict:
+          lecturedoc.usedpictures?.map?.((el) => {
+            return {
+              name: el.name,
+              mimetype: el.mimetype,
+              sha: el.sha.buffer.toString('hex'),
+              url: this.getFileURL(el.sha.buffer, el.mimetype),
+              urlthumb: this.getFileURL(el.tsha.buffer, el.mimetype)
+            }
+          }) || [],
+        bgpdf:
+          (lecturedoc.backgroundpdfuse &&
+            lecturedoc.backgroundpdf &&
+            lecturedoc.backgroundpdf.sha &&
+            this.getFileURL(lecturedoc.backgroundpdf.sha, 'application/pdf')) ||
+          null,
+        usedipynbs:
+          lecturedoc.usedipynbs?.map?.((el) => {
+            return {
+              name: el.name,
+              filename: el.filename,
+              /* note: el.note, */
+              mimetype: el.mimetype,
+              id: el.id,
+              sha: el.sha.buffer.toString('hex'),
+              applets: el.applets?.map?.((applet) => ({
+                appid: applet.appid,
+                appname: applet.appname
+              })),
+              url: this.getFileURL(el.sha.buffer, el.mimetype)
+            }
+          }) || []
+      }
 
-      return lecturedoc.usedpictures.map((el) => {
-        return {
-          name: el.name,
-          mimetype: el.mimetype,
-          sha: el.sha.buffer.toString('hex'),
-          url: this.getFileURL(el.sha.buffer, el.mimetype),
-          urlthumb: this.getFileURL(el.tsha.buffer, el.mimetype)
-        }
-      })
       // ok now I have the picture, but I also have to generate the urls
     } catch (err) {
       console.log('error in getUsedPicts pictures', err)
@@ -77,16 +84,24 @@ export class CommonConnection {
 
   async sendBoardsToSocket(lectureuuid, socket) {
     // we have to send first information about pictures
-
-    const usedpict = await this.getUsedPicts({ lectureuuid: lectureuuid })
+    // TODO use one mongo transaction
+    const {
+      usedpict = undefined,
+      bgpdf = null,
+      usedipynbs = undefined
+    } = await this.getUsedAssets({
+      lectureuuid: lectureuuid
+    })
     if (usedpict) {
       socket.emit('pictureinfo', usedpict)
     }
-    const bgpdf = await this.getBgpdf({ lectureuuid: lectureuuid })
     if (bgpdf) {
       socket.emit('bgpdfinfo', { bgpdfurl: bgpdf })
     } else {
       socket.emit('bgpdfinfo', { none: true })
+    }
+    if (usedipynbs) {
+      socket.emit('ipynbinfo', { ipynbs: usedipynbs })
     }
 
     try {

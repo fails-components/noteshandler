@@ -41,7 +41,7 @@
   ],
   "dependencies": {
     "@fails-components/config": "^1.3.0",
-    "@fails-components/security": "^1.3.2",
+    "@fails-components/security": "^1.4.1",
     "@socket.io/redis-adapter": "^7.1.0",
     "bson": "^4.7.0",
     "cidr-matcher": "^2.1.1",
