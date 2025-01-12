@@ -41,6 +41,7 @@
   ],
   "dependencies": {
     "@fails-components/config": "^1.3.0",
+    "@fails-components/data": "^1.4.1",
     "@fails-components/security": "^1.4.1",
     "@socket.io/redis-adapter": "^7.1.0",
     "bson": "^4.7.0",
