@@ -456,6 +456,16 @@ export class CommonConnection {
           if (index === 0 && cmd.tempOut) {
             ret.tempOut = cmd.tempOut
           }
+          // we need also to update the translation table
+          const update = {
+            /*  $addToSet: {
+              remoteClients: args.lectureuuid + ':' + args.clientid
+            } */
+          }
+          update.$set = {}
+          update.$set['transHash.' + mid] = majorid
+          update.$set['transHash.' + cid] = clientidpure
+          await routercol.updateOne({ url: ele.url }, update)
           return { data: ret, key: ele.key }
         })
         .map(async (ele) => {
@@ -629,9 +639,9 @@ export class CommonConnection {
         if (!dprimary) setprimary = true
       }
       const update = {
-        $addToSet: {
+        /* $addToSet: {
           localClients: args.lectureuuid + ':' + args.clientid
-        }
+        } */
       }
       const calcHash = async (input) => {
         const hash = createHash('sha256')
