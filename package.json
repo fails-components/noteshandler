@@ -1,6 +1,6 @@
 {
   "name": "@fails-components/noteshandler",
-  "version": "1.2.12",
+  "version": "1.2.13",
   "description": "Supplies server side notes handling",
   "author": "Marten Richter",
   "license": "AGPL-3.0-or-later",
