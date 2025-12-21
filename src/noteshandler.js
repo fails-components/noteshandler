@@ -85,6 +85,7 @@ export class NotesConnection extends CommonConnection {
       curtoken = token.decoded
       socket.emit('authtoken', { token: token.token })
     }
+    socket.emit('userhash', purenotes.userhash)
 
     {
       const presinfo = this.getPresentationinfo(purenotes)
@@ -111,7 +112,7 @@ export class NotesConnection extends CommonConnection {
         const userhash = purenotes.userhash
 
         this.notepadio.to(purenotes.roomname).emit('chatquestion', {
-          displayname: displayname,
+          displayname,
           text: cmd.text,
           encData: cmd.encData,
           keyindex: cmd.keyindex,
@@ -119,7 +120,7 @@ export class NotesConnection extends CommonConnection {
           videoquestion: cmd.videoquestion
             ? { id: purenotes.socketid }
             : undefined,
-          userhash: userhash
+          userhash
         })
 
         // console.log("chat send", cmd.text,socket.decoded_token);
@@ -141,51 +142,52 @@ export class NotesConnection extends CommonConnection {
       })
     })
 
-    socket.on(
-      'castvote',
-      async function (data, callback) {
-        // console.log('db cv data', data)
-        // console.log('db cv callback', callback)
-        /* console.log("db cv1", data.pollid && data.pollid.match(/^[0-9a-zA-Z]{9}$/.test));
-      console.log("db cv2",data.selection && ((data.selection && typeof data.selection=="string" && data.selection.match(/^[0-9a-zA-Z]{9}$/))));
-      console.log("db cv3",(( typeof data.selection=="string" && data.selection.match(/^[0-9a-zA-Z]{9}$/))));
-      console.log("db cv3",( Array.isArray(data.selection) && data.selection.filter((el)=>(el.match(/^[0-9a-zA-Z]{9}$/))).length>0)); */
+    socket.on('castvote', async (data, callback) => {
+      if (
+        data.pollid &&
+        /^[0-9a-zA-Z]{9}$/.test(data.pollid) &&
+        data.selection &&
+        ((typeof data.selection === 'string' &&
+          /^[0-9a-zA-Z]{9}$/.test(data.selection)) ||
+          (Array.isArray(data.selection) &&
+            data.selection.filter((el) => /^[0-9a-zA-Z]{9}$/.test(el)).length >
+              0))
+      ) {
+        const pollstate = await this.getPollinfo(purenotes)
         if (
-          data.pollid &&
-          /^[0-9a-zA-Z]{9}$/.test(data.pollid) &&
-          data.selection &&
-          ((typeof data.selection === 'string' &&
-            /^[0-9a-zA-Z]{9}$/.test(data.selection)) ||
-            (Array.isArray(data.selection) &&
-              data.selection.filter((el) => /^[0-9a-zA-Z]{9}$/.test(el))
-                .length > 0))
+          pollstate.limited &&
+          !pollstate.participants.includes(purenotes.userhash)
         ) {
-          const useruuid = socket.decoded_token.user.useruuid
-          try {
-            const ballothash = createHash('sha256')
-            ballothash.update(useruuid + data.pollid)
+          console.log('not eglible to vote!')
+          callback({ error: 'not eglible to vote!' })
+          return
+        }
+        if (pollstate.data.id !== data.pollid) {
+          callback({ error: 'pollid does not match current running poll!' })
+          return
+        }
+        const useruuid = socket.decoded_token.user.useruuid
+        try {
+          const ballothash = createHash('sha256')
+          ballothash.update(useruuid + data.pollid)
 
-            const salt = await this.redis.get(
-              'pollsalt:lecture:' +
-                purenotes.lectureuuid +
-                ':poll:' +
-                data.pollid
-            )
-            ballothash.update(salt)
-            const ballotid = ballothash.digest('hex')
-            this.notepadio.to(purenotes.roomname).emit('castvote', {
-              ballotid: ballotid,
-              vote: data.selection,
-              pollid: data.pollid
-            })
-            callback({ ballot: ballotid })
-          } catch (err) {
-            console.log('failed to get salt', err)
-            callback({ error: 'failure' })
-          }
-        } else callback({ error: 'failure' })
-      }.bind(this)
-    )
+          const salt = await this.redis.get(
+            'pollsalt:lecture:' + purenotes.lectureuuid + ':poll:' + data.pollid
+          )
+          ballothash.update(salt)
+          const ballotid = ballothash.digest('hex')
+          this.notepadio.to(purenotes.roomname).emit('castvote', {
+            ballotid: ballotid,
+            vote: data.selection,
+            pollid: data.pollid
+          })
+          callback({ ballot: ballotid })
+        } catch (err) {
+          console.log('failed to get salt', err)
+          callback({ error: 'failure' })
+        }
+      } else callback({ error: 'failure' })
+    })
 
     socket.on('getrouting', async (cmd, callback) => {
       let tempOut
@@ -327,7 +329,15 @@ export class NotesConnection extends CommonConnection {
 
     {
       const pollstate = await this.getPollinfo(purenotes)
-      if (pollstate) socket.emit(pollstate.command, pollstate.data)
+      if (pollstate) {
+        let canVote = true
+        if (pollstate.limited) {
+          if (!pollstate.participants.includes(purenotes.userhash)) {
+            canVote = false
+          }
+        }
+        socket.emit(pollstate.command, { ...pollstate.data, canVote })
+      }
     }
   }
 
@@ -458,9 +468,24 @@ export class NotesConnection extends CommonConnection {
       const pollinfo = await this.redis.hGetAll(
         'lecture:' + args.lectureuuid + ':pollstate'
       )
-      if (pollinfo.command && pollinfo.data)
-        return { command: pollinfo.command, data: JSON.parse(pollinfo.data) }
-      else return null
+      if (pollinfo.command && pollinfo.data) {
+        const limited = !!(pollinfo.limited === 'true')
+        let participants
+        if (limited) {
+          if (!pollinfo.participants) {
+            console.log('getPollinfo no participants for limited poll')
+            return null
+          }
+          participants = JSON.parse(pollinfo.participants)
+        }
+
+        return {
+          command: pollinfo.command,
+          data: JSON.parse(pollinfo.data),
+          limited,
+          participants
+        }
+      } else return null
     } catch (error) {
       console.log('getPollInfo failed', error)
       return null
